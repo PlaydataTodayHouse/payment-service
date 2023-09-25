@@ -1,4 +1,4 @@
-package com.example.payment.config;
+package com.example.payment.config.auth;
 
 
 import lombok.AllArgsConstructor;

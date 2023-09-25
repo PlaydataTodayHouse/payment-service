@@ -22,5 +22,7 @@ public class CartItem {
 
     private Long productId;
 
+    private Long optionDetailId;
+
     private int quantity;
 }

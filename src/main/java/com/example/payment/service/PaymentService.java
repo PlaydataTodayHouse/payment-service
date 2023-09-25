@@ -2,22 +2,31 @@ package com.example.payment.service;
 
 import com.example.payment.client.api.ProductClient;
 import com.example.payment.client.api.UserClient;
+import com.example.payment.config.auth.TokenInfo;
+import com.example.payment.config.kafka.OrderKafkaData;
+import com.example.payment.config.kafka.OrderProducer;
 import com.example.payment.domain.dto.Product;
-import com.example.payment.domain.dto.User;
 import com.example.payment.domain.entity.Cart;
 import com.example.payment.domain.entity.CartItem;
 import com.example.payment.domain.entity.Order;
 import com.example.payment.domain.entity.Wallet;
+import com.example.payment.domain.request.BuyProductRequest;
+import com.example.payment.domain.request.PurchaseRequest;
 import com.example.payment.repository.CartRepository;
 import com.example.payment.repository.OrderRepository;
 import com.example.payment.repository.WalletRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Service
+@Transactional
+@RequiredArgsConstructor
 public class PaymentService {
 
     private final CartRepository cartRepository;
@@ -25,36 +34,18 @@ public class PaymentService {
     private final OrderRepository orderRepository;
     private final ProductClient productClient;
     private final UserClient userClient;
+    private final OrderProducer orderProducer;
 
-    @Autowired
-    public PaymentService(CartRepository cartRepository,
-                          WalletRepository walletRepository,
-                          OrderRepository orderRepository,
-                          ProductClient productClient,
-                          UserClient userClient) {
-        this.cartRepository = cartRepository;
-        this.walletRepository = walletRepository;
-        this.orderRepository = orderRepository;
-        this.productClient = productClient;
-        this.userClient = userClient;
-    }
-
-
-    public void addProductToCart(UUID userUUID, Long productId, int quantity) {
-        User user = userClient.getByUUID(userUUID);
-        if (user == null) {
-            throw new RuntimeException("User not found");
-        }
-
+    public void addProductToCart(TokenInfo tokenInfo, Long productId, int quantity) {
         Product product = productClient.getById(productId);
         if (product == null) {
             throw new RuntimeException("Product not found");
         }
 
-        Cart cart = cartRepository.findByUserUUID(userUUID);
+        Cart cart = cartRepository.findByUserUUID(tokenInfo.getId());
         if (cart == null) {
             cart = new Cart();
-            cart.setUserUUID(userUUID);
+            cart.setUserUUID(tokenInfo.getId());
             cartRepository.save(cart);
         }
 
@@ -67,13 +58,8 @@ public class PaymentService {
         cartRepository.save(cart);
     }
 
-    public void removeProductFromCart(UUID userUUID, Long productId) {
-        User user = userClient.getByUUID(userUUID);
-        if (user == null) {
-            throw new RuntimeException("User not found");
-        }
-
-        Cart cart = cartRepository.findByUserUUID(userUUID);
+    public void removeProductFromCart(TokenInfo tokenInfo, Long productId) {
+        Cart cart = cartRepository.findByUserUUID(tokenInfo.getId());
 
         CartItem itemToRemove = null;
         for (CartItem item : cart.getItems()) {
@@ -90,38 +76,30 @@ public class PaymentService {
         }
     }
 
-    public void purchaseCart(UUID userUUID, String name, String address, String phoneNumber) {
-        User user = userClient.getByUUID(userUUID);
-        if (user == null) {
-            throw new RuntimeException("User not found");
-        }
+    public void purchaseCart(PurchaseRequest request, TokenInfo tokenInfo) {
+        Cart cart = cartRepository.findByUserUUID(tokenInfo.getId());
 
-        Cart cart = cartRepository.findByUserUUID(userUUID);
-
-        double totalCost = 0;
-        for (CartItem item : cart.getItems()) {
-            Product product = productClient.getById(item.getProductId());
-            if (product == null) {
-                throw new RuntimeException("Product not found");
-            }
-//            totalCost += product.getPrice() * item.getQuantity();
-//            product쪽에 getPrice로 가격 조회하는 메소드 구현시 수정 예정
-        }
-
-        int walletBalance = getWalletBalance(userUUID);
-        if (walletBalance < totalCost) {
+        int walletBalance = getWalletBalance(tokenInfo.getId());
+        if (walletBalance < request.getTotalPrice()) {
             throw new RuntimeException("Insufficient wallet balance");
         }
 
-        subtractWalletBalance(userUUID, (int) totalCost);
+        subtractWalletBalance(tokenInfo.getId(), request.getTotalPrice());
+
+        List<OrderKafkaData> orderKafkaDataList = request.getBuyProducts().stream()
+                .map(BuyProductRequest::toOrderKafkaData)
+                .toList();
+
+        orderProducer.send(orderKafkaDataList);
 
         // 주문 정보 생성 및 저장
-        Order order = new Order();
-        order.setUserUUID(userUUID);
-        order.setName(name);
-        order.setAddress(address);
-        order.setPhoneNumber(phoneNumber);
-        order.setOrderTime(LocalDateTime.now());
+        Order order = Order.builder()
+                .userUUID(tokenInfo.getId())
+                .username(tokenInfo.getName())
+                .address(tokenInfo.getAddress())
+                .phoneNumber(tokenInfo.getPhoneNumber())
+                .orderTime(LocalDateTime.now())
+                .build();
 
         orderRepository.save(order);
 

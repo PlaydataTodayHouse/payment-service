@@ -1,9 +1,9 @@
 package com.example.payment.controller;
 
-import com.example.payment.config.JwtService;
-import com.example.payment.config.TokenInfo;
+import com.example.payment.config.auth.JwtService;
+import com.example.payment.config.auth.TokenInfo;
 import com.example.payment.domain.request.AddCartRequest;
-import com.example.payment.domain.request.PurchaseCartRequest;
+import com.example.payment.domain.request.PurchaseRequest;
 import com.example.payment.domain.request.RemoveCartRequest;
 import com.example.payment.service.PaymentService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,9 +27,8 @@ public class PaymentController
     public ResponseEntity<String> addProductToCart(@RequestBody AddCartRequest request,
                                                    @RequestHeader("Authorization") String token) {
         TokenInfo tokenInfo = jwtService.parseAccessToken(token.replace("Bearer ", ""));
-        UUID userUUID = tokenInfo.getId();
 
-        paymentService.addProductToCart(userUUID, request.getProductId(), request.getQuantity());
+        paymentService.addProductToCart(tokenInfo, request.getProductId(), request.getQuantity());
         return ResponseEntity.ok("상품이 장바구니에 담겼습니다");
     }
 
@@ -37,20 +36,21 @@ public class PaymentController
     public ResponseEntity<String> removeProductFromCart(@RequestBody RemoveCartRequest request,
                                                         @RequestHeader("Authorization") String token) {
         TokenInfo tokenInfo = jwtService.parseAccessToken(token.replace("Bearer ", ""));
-        UUID userUUID = tokenInfo.getId();
 
-        paymentService.removeProductFromCart(userUUID, request.getProductId());
+        paymentService.removeProductFromCart(tokenInfo, request.getProductId());
         return ResponseEntity.ok("상품이 장바구니로부터 제거되었습니다");
     }
 
 
     @PostMapping("/cart/purchase")
-    public ResponseEntity<String> purchaseProductFromcCart(@RequestBody PurchaseCartRequest request,
-                                                           @RequestHeader("Authorization") String token) {
+    public ResponseEntity<String> purchaseProductFromCart(
+            @RequestBody PurchaseRequest request,
+            @RequestHeader("Authorization") String token
+    ) {
         TokenInfo tokenInfo = jwtService.parseAccessToken(token.replace("Bearer ", ""));
-        UUID userUUID = tokenInfo.getId();
 
-        paymentService.purchaseCart(userUUID, request.getName(), request.getAddress(), request.getPhoneNumber());
+        paymentService.purchaseCart(request, tokenInfo);
+
         return ResponseEntity.ok("상품 구매 성공");
     }
 
